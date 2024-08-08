@@ -1,0 +1,63 @@
+WITH 
+supplied_right_now AS 
+(
+    SELECT DISTINCT mpan_core AS distinct_mpans
+    FROM supply_property
+    WHERE 
+        is_active
+        AND type = 'supplied'
+        AND value = 'YES'
+        AND effective_from_date_uk <= CURRENT_DATE 
+        AND (effective_to_date_uk IS NULL OR effective_to_date_uk > CURRENT_DATE)
+),
+
+real_map AS 
+(
+    SELECT 
+        f.distinct_mpans,
+        address.latitude, 
+        address.longitude
+    FROM 
+        supplied_right_now f
+    JOIN 
+        meter_at_address maa 
+    ON 
+        maa.mpan_core = f.distinct_mpans
+    JOIN 
+        address 
+    ON 
+        address.id = maa.address_id
+),
+
+aggregated_data AS
+(
+    SELECT 
+        sp.value AS gsp_group_id,
+        COUNT(md.mpan_core) AS customer_count,
+        AVG(rm.latitude) AS avg_latitude,
+        AVG(rm.longitude) AS avg_longitude
+    FROM 
+        message_dump md
+    JOIN 
+        supply_property sp 
+    ON 
+        md.mpan_core = sp.mpan_core
+    JOIN 
+        real_map rm 
+    ON 
+        md.mpan_core = rm.distinct_mpans
+    WHERE 
+        sp.type = 'gsp_group_id' 
+        AND sp.value IS NOT NULL
+        AND CAST(JSON_EXTRACT_PATH_TEXT(md.payload, 'supply_address', 'paf_address', 'post_code') AS TEXT) ~ '^[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}$'
+    GROUP BY 
+        sp.value
+)
+
+SELECT 
+    gsp_group_id,
+    customer_count,
+    avg_latitude,
+    avg_longitude
+FROM 
+    aggregated_data;
